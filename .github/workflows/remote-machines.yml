@@ -41,6 +41,15 @@ jobs:
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -access -on -privs -all -restart -agent -allowAccessFor -allUsers
           sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist || true
+          # kickstart can't grant screen capture/control since macOS 12 ("Screen Sharing is not permitted");
+          # runner images allow writing the system TCC db, so grant it directly
+          db="/Library/Application Support/com.apple.TCC/TCC.db"
+          for client in com.apple.screensharing.agent com.apple.RemoteDesktopAgent; do
+            for svc in kTCCServiceScreenCapture kTCCServicePostEvent kTCCServiceAccessibility; do
+              sudo sqlite3 "$db" "INSERT OR REPLACE INTO access VALUES('$svc','$client',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,$(date +%s),NULL,NULL,'UNUSED',$(date +%s));"
+            done
+          done
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -restart -agent -console
 
       - name: Linux - enable password SSH
         if: runner.os == 'Linux'
