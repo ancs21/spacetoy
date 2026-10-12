@@ -17,12 +17,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { name: windows, runner: windows-latest }
-          - { name: macos, runner: macos-latest }
-          - { name: linux, runner: ubuntu-latest }
-    if: inputs.os == 'all' || inputs.os == matrix.name
-    runs-on: ${{ matrix.runner }}
+        name: ${{ inputs.os == 'all' && fromJSON('["windows","macos","linux"]') || fromJSON(format('["{0}"]', inputs.os)) }}
+    runs-on: ${{ matrix.name == 'windows' && 'windows-latest' || matrix.name == 'macos' && 'macos-latest' || 'ubuntu-latest' }}
     timeout-minutes: 360
     steps:
       - name: Windows - enable RDP
