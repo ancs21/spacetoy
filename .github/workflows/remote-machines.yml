@@ -1,0 +1,68 @@
+name: Remote machines (debug)
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "How long to keep machines alive (max ~350)"
+        default: "60"
+      os:
+        description: "Which machines to start"
+        type: choice
+        default: all
+        options: [all, windows, macos, linux]
+
+jobs:
+  machine:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows, runner: windows-latest }
+          - { name: macos, runner: macos-latest }
+          - { name: linux, runner: ubuntu-latest }
+    if: inputs.os == 'all' || inputs.os == matrix.name
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    steps:
+      - name: Windows - enable RDP
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          PW: ${{ secrets.REMOTE_PASSWORD }}
+        run: |
+          Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-LocalUser -Name runneradmin -Password (ConvertTo-SecureString $env:PW -AsPlainText -Force)
+
+      - name: macOS - enable Screen Sharing
+        if: runner.os == 'macOS'
+        env:
+          PW: ${{ secrets.REMOTE_PASSWORD }}
+        run: |
+          sudo dscl . -passwd /Users/runner "$PW"
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -configure -access -on -privs -all -restart -agent -allowAccessFor -allUsers
+          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist || true
+
+      - name: Join tailnet
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          hostname: gh-${{ matrix.name }}-${{ github.run_id }}
+          # ponytail: Tailscale SSH on Linux only; Windows uses RDP, macOS uses Screen Sharing
+          args: ${{ runner.os == 'Linux' && '--ssh' || '' }}
+
+      - name: Connection info
+        shell: bash
+        run: |
+          ip=$(tailscale ip -4)
+          case "${{ runner.os }}" in
+            Windows) echo "RDP:            $ip  user: runneradmin" ;;
+            macOS)   echo "Screen Sharing: vnc://$ip  user: runner" ;;
+            Linux)   echo "SSH:            ssh runner@gh-${{ matrix.name }}-${{ github.run_id }}" ;;
+          esac
+
+      - name: Keep alive
+        shell: bash
+        run: sleep $(( ${{ inputs.minutes }} * 60 ))
