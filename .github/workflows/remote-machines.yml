@@ -36,7 +36,8 @@ jobs:
         env:
           PW: ${{ secrets.REMOTE_PASSWORD }}
         run: |
-          sudo dscl . -passwd /Users/runner "$PW"
+          # runner's password is unknown, so dscl can't change it; add our own admin user instead
+          sudo sysadminctl -addUser remote -fullName remote -password "$PW" -admin
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -access -on -privs -all -restart -agent -allowAccessFor -allUsers
           sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist || true
@@ -55,7 +56,7 @@ jobs:
           ip=$(tailscale ip -4)
           case "${{ runner.os }}" in
             Windows) echo "RDP:            $ip  user: runneradmin" ;;
-            macOS)   echo "Screen Sharing: vnc://$ip  user: runner" ;;
+            macOS)   echo "Screen Sharing: vnc://$ip  user: remote" ;;
             Linux)   echo "SSH:            ssh runner@gh-${{ matrix.name }}-${{ github.run_id }}" ;;
           esac
 
