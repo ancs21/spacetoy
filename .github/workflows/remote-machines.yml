@@ -42,24 +42,37 @@ jobs:
             -activate -configure -access -on -privs -all -restart -agent -allowAccessFor -allUsers
           sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist || true
 
-      - name: Join tailnet
-        uses: tailscale/github-action@v3
-        with:
-          authkey: ${{ secrets.TS_AUTHKEY }}
-          hostname: gh-${{ matrix.name }}-${{ github.run_id }}
-          # ponytail: Tailscale SSH on Linux only; Windows uses RDP, macOS uses Screen Sharing
-          args: ${{ runner.os == 'Linux' && '--ssh' || '' }}
-
-      - name: Connection info
-        shell: bash
+      - name: Linux - enable password SSH
+        if: runner.os == 'Linux'
+        env:
+          PW: ${{ secrets.REMOTE_PASSWORD }}
         run: |
-          ip=$(tailscale ip -4)
-          case "${{ runner.os }}" in
-            Windows) echo "RDP:            $ip  user: runneradmin" ;;
-            macOS)   echo "Screen Sharing: vnc://$ip  user: remote" ;;
-            Linux)   echo "SSH:            ssh runner@gh-${{ matrix.name }}-${{ github.run_id }}" ;;
-          esac
+          echo "runner:$PW" | sudo chpasswd
+          echo "PasswordAuthentication yes" | sudo tee /etc/ssh/sshd_config.d/99-remote.conf
+          sudo systemctl restart ssh || (sudo apt-get install -y openssh-server && sudo systemctl restart ssh)
 
-      - name: Keep alive
+      - name: Cloudflare quick tunnel (keep alive)
         shell: bash
-        run: sleep $(( ${{ inputs.minutes }} * 60 ))
+        env:
+          PW: ${{ secrets.REMOTE_PASSWORD }}
+        run: |
+          case "${{ runner.os }}" in
+            Windows) svc=rdp://localhost:3389; bin=cloudflared-windows-amd64.exe ;;
+            macOS)   svc=tcp://localhost:5900; bin=cloudflared-darwin-arm64.tgz ;;
+            Linux)   svc=ssh://localhost:22;   bin=cloudflared-linux-amd64 ;;
+          esac
+          curl -sSL -o "$bin" "https://github.com/cloudflare/cloudflared/releases/latest/download/$bin"
+          case "$bin" in *.tgz) tar xzf "$bin"; cf=./cloudflared ;; *) chmod +x "$bin"; cf="./$bin" ;; esac
+
+          # cloudflared prints the URL, so keep its output out of the public log
+          "$cf" tunnel --no-autoupdate --url "$svc" > cf.log 2>&1 &
+          for i in $(seq 60); do
+            host=$(grep -oE '[a-z0-9-]+\.trycloudflare\.com' cf.log | head -1) && [ -n "$host" ] && break
+            sleep 2
+          done
+          [ -n "$host" ] || { echo "tunnel did not start"; exit 1; }
+          echo "::add-mask::$host"
+
+          # public repo: print the hostname encrypted with REMOTE_PASSWORD
+          echo "ENCRYPTED_HOST ${{ matrix.name }} $(printf '%s' "$host" | openssl enc -aes-256-cbc -pbkdf2 -a -A -pass env:PW)"
+          sleep $(( ${{ inputs.minutes }} * 60 ))
