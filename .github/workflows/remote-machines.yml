@@ -74,7 +74,12 @@ jobs:
           case "$bin" in *.tgz) tar xzf "$bin"; cf=./cloudflared ;; *) chmod +x "$bin"; cf="./$bin" ;; esac
 
           # cloudflared prints the URL, so keep its output out of the public log
-          "$cf" tunnel --no-autoupdate --url "$svc" > cf.log 2>&1 &
+          if [ "${{ runner.os }}" = macOS ]; then
+            # the macOS runner reaps background processes; launchd keeps cloudflared alive
+            sudo launchctl submit -l cloudflared -o "$PWD/cf.log" -e "$PWD/cf.log" -- "$PWD/cloudflared" tunnel --no-autoupdate --url "$svc"
+          else
+            "$cf" tunnel --no-autoupdate --url "$svc" > cf.log 2>&1 &
+          fi
           for i in $(seq 60); do
             host=$(grep -oE '[a-z0-9-]+\.trycloudflare\.com' cf.log | head -1) && [ -n "$host" ] && break
             sleep 2
@@ -93,4 +98,9 @@ jobs:
 
       - name: Keep alive
         shell: bash
-        run: sleep $(( ${{ inputs.minutes }} * 60 ))
+        run: |
+          end=$(( $(date +%s) + ${{ inputs.minutes }} * 60 ))
+          while [ "$(date +%s)" -lt "$end" ]; do
+            pgrep -f "cloudflared.*tunnel" >/dev/null || { echo "cloudflared died"; tail -20 cf.log | grep -v trycloudflare; exit 1; }
+            sleep 30
+          done
