@@ -3,7 +3,7 @@
 # Decrypts the run's tunnel hostname and opens a local port to it.
 set -euo pipefail
 os=$1
-run=${2:-$(gh run list -R ancs21/spacetoy -w remote-machines.yml -L 1 --json databaseId --jq '.[0].databaseId')}
+run=${2:-$(gh api "repos/ancs21/spacetoy/actions/artifacts?name=host-$os" --jq '.artifacts[0].workflow_run.id')}
 dir=$(mktemp -d)
 gh run download "$run" -R ancs21/spacetoy -n "host-$os" -D "$dir"
 host=$(openssl enc -d -aes-256-cbc -pbkdf2 -a -A -pass pass:"$(security find-generic-password -s spacetoy-remote -w)" < "$dir/host-$os.enc")
