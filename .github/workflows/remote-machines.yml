@@ -51,7 +51,7 @@ jobs:
           echo "PasswordAuthentication yes" | sudo tee /etc/ssh/sshd_config.d/99-remote.conf
           sudo systemctl restart ssh || (sudo apt-get install -y openssh-server && sudo systemctl restart ssh)
 
-      - name: Cloudflare quick tunnel (keep alive)
+      - name: Start Cloudflare quick tunnel
         shell: bash
         env:
           PW: ${{ secrets.REMOTE_PASSWORD }}
@@ -73,6 +73,15 @@ jobs:
           [ -n "$host" ] || { echo "tunnel did not start"; exit 1; }
           echo "::add-mask::$host"
 
-          # public repo: print the hostname encrypted with REMOTE_PASSWORD
-          echo "ENCRYPTED_HOST ${{ matrix.name }} $(printf '%s' "$host" | openssl enc -aes-256-cbc -pbkdf2 -a -A -pass env:PW)"
-          sleep $(( ${{ inputs.minutes }} * 60 ))
+          # public repo: share the hostname encrypted with REMOTE_PASSWORD
+          # (artifact, because job logs aren't readable until the job ends)
+          printf '%s' "$host" | openssl enc -aes-256-cbc -pbkdf2 -a -A -pass env:PW > host-${{ matrix.name }}.enc
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: host-${{ matrix.name }}
+          path: host-${{ matrix.name }}.enc
+
+      - name: Keep alive
+        shell: bash
+        run: sleep $(( ${{ inputs.minutes }} * 60 ))
