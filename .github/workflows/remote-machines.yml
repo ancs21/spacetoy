@@ -10,15 +10,15 @@ on:
         description: "Which machines to start"
         type: choice
         default: all
-        options: [all, windows, macos, linux]
+        options: [all, windows, macos, linux, android, ios]
 
 jobs:
   machine:
     strategy:
       fail-fast: false
       matrix:
-        name: ${{ inputs.os == 'all' && fromJSON('["windows","macos","linux"]') || fromJSON(format('["{0}"]', inputs.os)) }}
-    runs-on: ${{ matrix.name == 'windows' && 'windows-latest' || matrix.name == 'macos' && 'macos-latest' || 'ubuntu-latest' }}
+        name: ${{ inputs.os == 'all' && fromJSON('["windows","macos","linux","android","ios"]') || fromJSON(format('["{0}"]', inputs.os)) }}
+    runs-on: ${{ matrix.name == 'windows' && 'windows-latest' || (matrix.name == 'macos' || matrix.name == 'ios') && 'macos-latest' || 'ubuntu-latest' }}
     timeout-minutes: 360
     steps:
       - name: Windows - enable RDP
@@ -51,8 +51,32 @@ jobs:
           done
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -restart -agent -console
 
+      - name: iOS - boot Simulator
+        if: matrix.name == 'ios'
+        env:
+          PW: ${{ secrets.REMOTE_PASSWORD }}
+        run: |
+          # Simulator runs in runner's GUI session, so try to make runner loggable too
+          sudo sysadminctl -resetPasswordFor runner -newPassword "$PW" || true
+          udid=$(xcrun simctl list devices available -j | jq -r '[.devices[][] | select(.name | startswith("iPhone"))][0].udid')
+          xcrun simctl boot "$udid"
+          open -a Simulator
+
+      - name: Android - boot emulator
+        if: matrix.name == 'android'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+          img="system-images;android-34;google_apis;x86_64"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" emulator platform-tools "$img" > /dev/null
+          echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd -n dev -k "$img" -d pixel_6
+          nohup "$ANDROID_HOME/emulator/emulator" -avd dev -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > emu.log 2>&1 &
+          adb wait-for-device
+          until [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1 ]; do sleep 5; done
+          echo booted
+
       - name: Linux - enable password SSH
-        if: runner.os == 'Linux'
+        if: matrix.name == 'linux'
         env:
           PW: ${{ secrets.REMOTE_PASSWORD }}
         run: |
@@ -65,10 +89,11 @@ jobs:
         env:
           PW: ${{ secrets.REMOTE_PASSWORD }}
         run: |
-          case "${{ runner.os }}" in
-            Windows) svc=rdp://localhost:3389; bin=cloudflared-windows-amd64.exe ;;
-            macOS)   svc=tcp://localhost:5900; bin=cloudflared-darwin-arm64.tgz ;;
-            Linux)   svc=ssh://localhost:22;   bin=cloudflared-linux-amd64 ;;
+          case "${{ matrix.name }}" in
+            windows)   svc=rdp://localhost:3389; bin=cloudflared-windows-amd64.exe ;;
+            macos|ios) svc=tcp://localhost:5900; bin=cloudflared-darwin-arm64.tgz ;;
+            linux)     svc=ssh://localhost:22;   bin=cloudflared-linux-amd64 ;;
+            android)   svc=tcp://localhost:5555; bin=cloudflared-linux-amd64 ;;  # emulator's adb port
           esac
           curl -sSL -o "$bin" "https://github.com/cloudflare/cloudflared/releases/latest/download/$bin"
           case "$bin" in *.tgz) tar xzf "$bin"; cf=./cloudflared ;; *) chmod +x "$bin"; cf="./$bin" ;; esac
