@@ -67,6 +67,8 @@ jobs:
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+          # avdmanager and emulator disagree on the default AVD dir; pin it for both
+          export ANDROID_AVD_HOME="$HOME/.android/avd" && mkdir -p "$ANDROID_AVD_HOME"
           img="system-images;android-34;google_apis;x86_64"
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" emulator platform-tools "$img" > /dev/null
           echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd -n dev -k "$img" -d pixel_6
